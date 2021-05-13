@@ -110,7 +110,7 @@ uint8_t my_node_id = 0;			// ID of this board - calculated from mcu_unique_id
 #define R_DATA_RATE 			RF24_250KBPS
 #define R_RETRIES_DELAY 		(8ul)  // see documentation for setRetires function
 #define R_RETRIES_COUNT 		(3ul) // see documentation for setRetires function
-#define MSG_SEP 				"|"
+#define MSG_SEP 				""
 #define R_MSG_MAX_REPEAT 		(3ul) // how many time try of sending message should be taken - additional wrapping of write function
 RF24 radio(R_PIN_CE, R_PIN_CSN);
 
@@ -279,7 +279,7 @@ void say_hello_world(const int how_many_cycles = 2, const int delay_ms = 100, co
 }
 
 // function responsible for generating messages to send
-void prepare_msg(const int measure_id, const float measure_value, char *msg, const char *sprint_format = "%.3f")
+void prepare_msg(const int measure_id, const float measure_value, char *msg, const char *sprint_format = "%.2f")
 {
 	char buff[33] = {'\0'};
 	strcpy(msg, "");
@@ -632,7 +632,7 @@ void run_cycle()
 		send_msg(&msg[0]);
 	};
 
-	prepare_msg(MSGC_BATTERY_VOLTAGE, battery_voltage, &msg[0]);
+	prepare_msg(MSGC_BATTERY_VOLTAGE, battery_voltage, &msg[0], "%.3f");
 	send_msg(&msg[0]);
 
 	// send basic stats about this board and startup
@@ -648,13 +648,13 @@ void run_cycle()
 		send_msg(&msg[0]);
 
 		// avg cycle length
-		prepare_msg(MSGC_AVG_CYCLE_LENGTH, (gcnt.get_cycles_length() / (float)gcnt.get_cycles()), &msg[0], "%.2f");
+		prepare_msg(MSGC_AVG_CYCLE_LENGTH, (gcnt.get_cycles_length() / (float)gcnt.get_cycles()), &msg[0], "%.f");
 		send_msg(&msg[0]);
 
 		// delivery ratio
 		if (gcnt.get_msg_trials() > 0)
 		{
-			prepare_msg(MSGC_DELIVERY_RATIO, (gcnt.get_msg_success() / (float)gcnt.get_msg_trials()), &msg[0], "%.3f");
+			prepare_msg(MSGC_DELIVERY_RATIO, (gcnt.get_msg_success() / (float)gcnt.get_msg_trials() * 100), &msg[0], "%03.f");
 			send_msg(&msg[0]);
 		};
 
