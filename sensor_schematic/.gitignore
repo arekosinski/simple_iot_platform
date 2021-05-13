@@ -1,0 +1,6 @@
+*.b#*
+*.s#*
+*.pro
+*.csv
+*.numbers
+jlcpcb_manufacture_files
