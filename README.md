@@ -1,11 +1,6 @@
 # simple_iot_system
 System for gathering temperature and humidity based on SAM D21, Arduino and nrf24l01. Also Raspberry Pi is involved:)
 
-# System over view
-
-
-Why haven't you just connected nrf24l01 module through SPI into Raspberry Pi? It's straight forward isn't it?
-Providing additional layer of communication gives independence from operating system or platform - there is no problem with drivers installation for both of SPI and nrf24l01. UART works every where. One can even connect it through RS232 converter to PC (like RPI:)).
 
 # Parts of the system
 1. Board with MCU, temperature & humidity sensor and radio (nrf24l01)
