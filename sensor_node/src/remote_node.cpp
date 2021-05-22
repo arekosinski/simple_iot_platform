@@ -21,6 +21,7 @@ const unsigned int year = 21;
 
 GlobalCounter gcnt;
 
+
 // dictionaries
 /*
 Enum with definition of possible system restart. User should be aware of what kind of reboot occurred.
@@ -32,7 +33,7 @@ Enum with definition of possible system restart. User should be aware of what ki
 6 - WDT Reset
 99 - Unknown / very very sad face :(
 */
-typedef enum
+typedef enum e_platform_reboot_codes_definition
 {
 	RBT_SYSTEM = 0,		/** (0) System reset */
 	RBT_EXTERNAL_RESET, /** (1) External reset (reset pin) */
@@ -46,12 +47,12 @@ typedef enum
 /*
 Enum with definition of measurments code
 */
-typedef enum
+typedef enum e_message_content_codes_definition
 {
 	MSGC_TEMPERATURE = 0x1,
 	MSGC_HUMIDITY = 0x2,
-	MSGC_TEMP_SENSOR_ERROR = 0x4,
 	MSGC_BATTERY_VOLTAGE = 0x3,
+	MSGC_TEMP_SENSOR_ERROR = 0x4,
 	MSGC_ALL_MESSAGES_SUCCESS = 0x5,
 	MSGC_ALL_SENDING_TRIALS = 0x6,
 	MSGC_AVG_CYCLE_LENGTH = 0x7,
@@ -110,7 +111,7 @@ uint8_t my_node_id = 0;			// ID of this board - calculated from mcu_unique_id
 #define R_DATA_RATE 			RF24_250KBPS
 #define R_RETRIES_DELAY 		(8ul)  // see documentation for setRetires function
 #define R_RETRIES_COUNT 		(3ul) // see documentation for setRetires function
-#define MSG_SEP 				""
+#define MSG_SEP 				"|"
 #define R_MSG_MAX_REPEAT 		(3ul) // how many time try of sending message should be taken - additional wrapping of write function
 RF24 radio(R_PIN_CE, R_PIN_CSN);
 
@@ -284,7 +285,7 @@ void prepare_msg(const int measure_id, const float measure_value, char *msg, con
 	char buff[33] = {'\0'};
 	strcpy(msg, "");
 
-	snprintf(buff, sizeof(buff), "%x%s%x%s", my_node_id, MSG_SEP, measure_id, MSG_SEP);
+	snprintf(buff, sizeof(buff), "%x%x", my_node_id, measure_id);
 	strcat(msg, buff);
 
 	// third part: measure itself tadadam!
@@ -331,19 +332,18 @@ bool send_msg(char *msg)
 	return false;
 }
 
-// in this place, whole unique id of SAM D21 is sent
+/*
+ in this place, unique id of SAM D21 is sent
+ only available in debug mode
+*/
 void prepare_and_send_unique_id()
 {
 #ifdef DEBUG_ENABLED
 	for (uint_fast8_t cnt = 0; cnt < 4; cnt++)
 	{
-		char buff[33] = {};
 		char msg[33] = {};
 		strcpy(msg, "");
-		snprintf(buff, sizeof(buff), "%x%s%x%s", my_node_id, MSG_SEP, MSGC_ID_1 + cnt, MSG_SEP);
-		strcat(msg, buff);
-		snprintf(buff, sizeof(buff), "0x%x", mcu_unique_id[cnt]);
-		strcat(msg, buff);
+		snprintf(msg, sizeof(msg), "%x%x0x%x", my_node_id, MSGC_ID_1 + cnt, mcu_unique_id[cnt]);
 		debug_me(msg);
 		send_msg(&msg[0]);
 	};
@@ -354,7 +354,7 @@ void prepare_and_send_unique_id()
 void radio_init()
 {
 	bool radio_begin_status = radio.begin();
-	uint_fast32_t rx_address = R_ADDR_RX_COMMON + my_node_id;
+	uint_fast32_t rx_address = R_ADDR_RX_COMMON + my_node_id; // calculating private address for communication
 	if (!radio_begin_status)
 	{ // in case of radio failure
 		debug_me("radio hardware is not responding!!");
@@ -632,7 +632,7 @@ void run_cycle()
 		send_msg(&msg[0]);
 	};
 
-	prepare_msg(MSGC_BATTERY_VOLTAGE, battery_voltage, &msg[0], "%.3f");
+	prepare_msg(MSGC_BATTERY_VOLTAGE, battery_voltage, &msg[0], "%01.3f");
 	send_msg(&msg[0]);
 
 	// send basic stats about this board and startup
