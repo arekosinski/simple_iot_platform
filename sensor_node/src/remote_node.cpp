@@ -57,11 +57,16 @@ typedef enum e_message_content_codes_definition
 	MSGC_ALL_SENDING_TRIALS = 0x6,
 	MSGC_AVG_CYCLE_LENGTH = 0x7,
 	MSGC_DELIVERY_RATIO = 0x8,
+	MSGC_RETRANSMISSIONS = 0x9,
 	MSGC_ID_1 = 0xB,
 	MSGC_ID_2 = 0xC,
 	MSGC_ID_3 = 0xD,
 	MSGC_ID_4 = 0xE,
 	MSGC_STARTUP_CODE = 0xF
+	// for further use:
+	// 0x10
+	// 0xA
+	// 0x0
 } message_content_ref;
 
 // define board pins according to arduino pins schema & board design
@@ -313,6 +318,7 @@ bool send_msg(char *msg)
 		debug_me("Sending trial: %i", sending_trial);
 		gcnt.increase_msg_trials();
 		msg_sending_result = radio.write(msg, strlen(msg));
+		gcnt.increase_msg_retransmissions(radio.getARC()); // get retransmission count directly from radio module - there is implemented native msg repeating mechanism in case of sending failure
 		if (msg_sending_result)
 		{
 			debug_me("Message sent with success!");
@@ -322,7 +328,6 @@ bool send_msg(char *msg)
 		};
 		debug_me("Message sending failed");
 		say_hello_world(1, 2, LED_BUILTIN_1);
-		gcnt.increase_msg_retransmissions();
 		if (sending_trial < R_MSG_MAX_REPEAT)
 		{
 			delay((sending_trial + 1) * R_RETRIES_DELAY * 4);
@@ -657,6 +662,10 @@ void run_cycle()
 			prepare_msg(MSGC_DELIVERY_RATIO, (gcnt.get_msg_success() / (float)gcnt.get_msg_trials() * 100), &msg[0], "%03.f");
 			send_msg(&msg[0]);
 		};
+
+		// retransmission count (from radio module)
+		prepare_msg(MSGC_RETRANSMISSIONS, (gcnt.get_msg_retransmissions()), &msg[0], "%.f");
+		send_msg(&msg[0]);
 
 		prepare_msg(MSGC_STARTUP_CODE, startup_reset_cause, &msg[0], "%.f");
 		send_msg(&msg[0]);
