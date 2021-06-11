@@ -3,6 +3,7 @@
 extern "C" void __libc_init_array(void);
 
 #define VARIANT_MCK (8000000ul) // this is core speed we will work at - 8MHz
+#define F_CPU VARIANT_MCK // for compatibility with Arduino frameworks
 
 // rtc requirement
 #include "RTCZero.h"
@@ -40,7 +41,7 @@ typedef enum e_platform_reboot_codes_definition
 	RBT_BOD3V3,			/** (2) BOD 3.3V */
 	RBT_BOD1V2,			/** (3) BOD 1.2V */
 	RBT_STARTUP,		/** (4) Normaln power on reset - standard */
-	RBT_WDT,			/** (6) WDT */
+	RBT_WDT,			/** (5) WDT */
 	RBT_UNKNOWN = 99
 } startup_code_ref;
 
@@ -81,21 +82,27 @@ typedef enum e_message_content_codes_definition
 #define PIN_BATTERY_VOLTAGE 	(A5)  // Arduino: A5 / SAM D21: PB02
 
 // system behavior
+// clock multiplexers used
+// RTC - 2
+// WDT - 3
+// SERCOM3 - GCLK0
+// SERCOM5 - GCLK0
 #define GCLK_UNUSED_FOR_EVER 	GCLK_CLKCTRL_GEN_GCLK7_Val // which GCLK will be never used - we can connect all devices to this one
 #define GCLK_USED_FOR_RTC 		GCLK_CLKCTRL_GEN_GCLK2_Val	// clock used for RTC - required to wake up. always must be enabled
+#define GCLK_USED_FOR_WDT 		GCLK_CLKCTRL_GEN_GCLK3_Val	// clock used for RTC - required to wake up. always must be enabled
 #define SERIAL_BAUDS			(38400ul) // connection speed for debug purposes
 #ifndef GLOBAL_SLEEP_SECONDS
-	#define GLOBAL_SLEEP_SECONDS (8ul)
+	#define GLOBAL_SLEEP_SECONDS (60*6ul)
 #endif
 uint_fast8_t is_debug_initialized = 0;
 uint_fast8_t startup_reset_cause = 0;
 uint_fast32_t mcu_unique_id[4]; // in this place we will keep unique identifier of our board
 uint8_t my_node_id = 0;			// ID of this board - calculated from mcu_unique_id
 #ifndef BOARD_VCC
-	#define BOARD_VCC 			(3.017F) // required for ADC measurments (VCC is source for voltage divider)
+	#define BOARD_VCC 			(3.05F) // required for ADC measurments (VCC is source for voltage divider)
 #endif
 #ifndef STATS_SENDER_CYCLES // after how many cycles performance statistics should be sent
-	#define STATS_SENDER_CYCLES (100ul)
+	#define STATS_SENDER_CYCLES (20ul)
 #endif
 
 // including stuff required for communication over NRF24 module
@@ -111,7 +118,7 @@ uint8_t my_node_id = 0;			// ID of this board - calculated from mcu_unique_id
 #define R_ADDR_WIDTH 			(3ul)
 #define R_CHANNEL 				(99ul)
 #ifndef R_POWER_LVL
-	#define R_POWER_LVL 		RF24_PA_MAX
+	#define R_POWER_LVL 		RF24_PA_HIGH
 #endif
 #define R_DATA_RATE 			RF24_250KBPS
 #define R_RETRIES_DELAY 		(8ul)  // see documentation for setRetires function
@@ -182,21 +189,16 @@ void debug_me(const char *str, T... args)
 
 void enable_debug_mode()
 {
-#ifdef DEBUG_ENABLED
 	PM->APBCMASK.reg |= PM_APBCMASK_SERCOM5;
 	Serial.begin(SERIAL_BAUDS);
-	debug_me("----------------------------");
-	debug_me("Debug enabled");
 	is_debug_initialized = 1;
-#endif
 }
 
 void disable_debug_mode()
 {
-#ifdef DEBUG_ENABLED
 	Serial.end();
+	PM->APBCMASK.reg &= ~PM_APBCMASK_SERCOM5;
 	is_debug_initialized = 0;
-#endif
 }
 
 void get_unique_id()
@@ -253,29 +255,90 @@ startup_code_ref get_last_reset_cause()
 	return RBT_UNKNOWN;
 }
 
+// watchdog functions
+void watchdog_mark_my_existence() {
+#ifndef NO_WATCHDOG
+	debug_me("Hi watchdog i'm here!");
+	WDT->CLEAR.reg = WDT_CLEAR_CLEAR_KEY_Val;
+#endif
+};
+
+void watchdog_init() {
+#ifndef NO_WATCHDOG
+	// Generic clock generator 3, divisor = 32 (2^(DIV+1))
+    GCLK->GENDIV.reg = GCLK_GENDIV_ID(GCLK_USED_FOR_WDT) | GCLK_GENDIV_DIV(4);
+
+    // Enable clock generator 3 using low-power 32KHz oscillator.
+    // With /32 divisor above, this yields 1024Hz(ish) clock.
+    GCLK->GENCTRL.reg = GCLK_GENCTRL_ID(GCLK_USED_FOR_WDT) |
+                        GCLK_GENCTRL_GENEN |
+						GCLK_GENCTRL_IDC |
+                        GCLK_GENCTRL_SRC_OSCULP32K |
+                        GCLK_GENCTRL_DIVSEL;
+    while (GCLK->STATUS.bit.SYNCBUSY);
+
+    // WDT clock = clock gen 3
+    GCLK->CLKCTRL.reg = GCLK_CLKCTRL_ID_WDT | GCLK_CLKCTRL_CLKEN | GCLK_CLKCTRL_GEN(GCLK_USED_FOR_WDT);
+
+    NVIC_DisableIRQ(WDT_IRQn);
+    NVIC_ClearPendingIRQ(WDT_IRQn);
+
+	WDT->CTRL.bit.ALWAYSON = 0;
+	WDT->CTRL.bit.WEN = 0;
+	WDT->CONFIG.bit.PER = 0x9; // watchdog should wait 4096 cycles before reset
+	while (WDT->STATUS.bit.SYNCBUSY);
+
+	watchdog_mark_my_existence();
+#endif
+};
+
+void watchdog_enable() {
+#ifndef NO_WATCHDOG
+	watchdog_mark_my_existence();
+	debug_me("Starting watchdog");
+	WDT->CTRL.bit.ENABLE = 1;
+	while (WDT->STATUS.bit.SYNCBUSY);
+	debug_me("Watchodog: on");
+#endif
+};
+
+void watchdog_disable() {
+#ifndef NO_WATCHDOG
+	WDT->CTRL.bit.ENABLE = 0;
+	while (WDT->STATUS.bit.SYNCBUSY);
+	debug_me("Watchodog: off");
+#endif
+};
+
+
 //
 // basic function to shorthand (wrap) enabling and disabling available equipment
-void enable_equipment(const uint8_t pinNumber, const PinStatus state = HIGH, const PinMode mode = OUTPUT)
+void enable_equipment(const uint8_t pinNumber, const PinStatus state = HIGH,  unsigned long delay_lag = 0, const PinMode mode = OUTPUT, bool portDrvStrength = false)
 {
-	debug_me("Enabling eq pin:%i state:%i mode:%i", pinNumber, state, mode);
 	pinMode(pinNumber, mode);
+	if ( portDrvStrength == true ) {
+		PORT->Group[g_APinDescription[pinNumber].ulPort].PINCFG[g_APinDescription[pinNumber].ulPin].bit.DRVSTR = 1;
+	};
 	digitalWrite(pinNumber, state);
+	debug_me("Enabled eq pin:%i state:%i mode:%i", pinNumber, state, mode);
+	if ( delay_lag > 0 ) {
+		delay(delay_lag);
+	};	
 }
 
 void disable_equipment(const uint8_t pinNumber, const PinStatus state = LOW, const PinMode mode = INPUT_PULLUP)
 {
-	debug_me("Disabling eq pin:%i state:%i mode:%i", pinNumber, state, mode);
 	digitalWrite(pinNumber, state);
 	pinMode(pinNumber, mode);
+	debug_me("Disabled eq pin:%i state:%i mode:%i", pinNumber, state, mode);
 }
 
 // making led blinking a bit easier
-void say_hello_world(const int how_many_cycles = 2, const int delay_ms = 100, const int led_port = LED_BUILTIN)
+void say_hello_world(const int how_many_cycles = 2, unsigned long delay_ms = 100, const int led_port = LED_BUILTIN)
 {
 	for (int i = 0; i < how_many_cycles; i++)
 	{
-		enable_equipment(led_port, LOW);
-		delay(delay_ms);
+		enable_equipment(led_port, LOW, delay_ms);
 		disable_equipment(led_port, HIGH);
 		if (i + 1 < how_many_cycles)
 		{
@@ -358,18 +421,19 @@ void prepare_and_send_unique_id()
 // base radio configuration
 void radio_init()
 {
+	debug_me("Radio: begin");
 	bool radio_begin_status = radio.begin();
 	uint_fast32_t rx_address = R_ADDR_RX_COMMON + my_node_id; // calculating private address for communication
 	if (!radio_begin_status)
 	{ // in case of radio failure
-		debug_me("radio hardware is not responding!!");
+		debug_me("Radio: hardware is not responding!!");
 		say_hello_world(100, 200, LED_BUILTIN_1);
 		// perform system reset - maybe this will help somehow?
 		NVIC_SystemReset();
 	};
-	debug_me("Radio initiated with success");
-	debug_me("NRF RX address: %x", rx_address);
-	debug_me("NRF output power: %i", R_POWER_LVL);
+	debug_me("Radio: initiated with success");
+	debug_me("Radio: NRF RX address: %x", rx_address);
+	debug_me("Radio: NRF output power: %i", R_POWER_LVL);
 	radio.enableDynamicPayloads();
 
 	radio.setAutoAck(true);
@@ -392,11 +456,13 @@ void radio_disable()
 {
 	radio.powerDown();
 	// before removing VCC we should switch all communication pins into input to not fry NRF
-	pinMode(22, INPUT_PULLUP);
-	pinMode(38, INPUT_PULLUP);
-	pinMode(9, INPUT_PULLUP);
-	pinMode(23, INPUT_PULLUP);
-	pinMode(24, INPUT_PULLUP);
+	pinMode(22, INPUT); // MISO
+	pinMode(38, INPUT); // CSN
+	pinMode(9, INPUT); // CE
+	pinMode(23, INPUT); // MOSI
+	pinMode(24, INPUT); // SCK
+
+	debug_me("Radio: disabled");
 }
 
 // END radio functions
@@ -523,12 +589,14 @@ float get_voltage(uint_fast32_t adc_reading)
 // SHT31 init function
 bool sht31_enable()
 {
-	bool sht31_sensor_failure = false;
+	uint8_t sht31_sensor_failure = 0;
 
 	if (!sht31.begin(0x44))
 	{
 		debug_me("Couldn't find SHT31");
-		sht31_sensor_failure = true;
+		sht31_sensor_failure = 1;
+
+		return sht31_sensor_failure;
 	};
 
 	sht31.heater(SHT31_ENABLE_HEATER);
@@ -549,18 +617,18 @@ void sht31_disable()
 {
 	// all measurments are taken - now we can switch off all sensors
 	// disable SCL and SDA ports
-	pinMode(20, INPUT_PULLUP);
-	pinMode(21, INPUT_PULLUP);
+	pinMode(20, INPUT);
+	pinMode(21, INPUT);
 }
 
 // lets make some juice:)
 void run_cycle()
 {
-	uint_fast32_t epoch_start, epoch_end, epoch_diff = 0;
+	unsigned long epoch_start, epoch_end, epoch_diff = 0;
 	float battery_voltage = 0;
 	float sht31_temperature = 0;
 	float sht31_humidity = 0;
-	bool sht31_sensor_failure = false;
+	uint8_t sht31_sensor_failure = 0;
 	char msg[32] = {};
 
 	epoch_start = millis();
@@ -570,10 +638,8 @@ void run_cycle()
 	debug_me("Cycle timestamp start %i", epoch_start);
 #endif
 
-	// power up all sensors we should interact with
-	enable_equipment(PIN_SENSORS_EN, LOW);
-	// get some time to stabilize voltage
-	delay(5);
+	// power up all sensors we should interact with and get some time to stabilize voltage
+	enable_equipment(PIN_SENSORS_EN, LOW, 5);
 	sht31_sensor_failure = sht31_enable();
 
 	sht31_temperature = sht31.readTemperature();
@@ -586,7 +652,7 @@ void run_cycle()
 	else
 	{
 		debug_me("SHT31 Failed to read temperature");
-		sht31_sensor_failure = true;
+		sht31_sensor_failure = sht31_sensor_failure + 2;
 	};
 
 	if (!isnan(sht31_humidity))
@@ -596,20 +662,17 @@ void run_cycle()
 	else
 	{
 		debug_me("SHT31 Failed to read humidity");
-		sht31_sensor_failure = true;
+		sht31_sensor_failure = sht31_sensor_failure + 4;
 	};
 
 	sht31_disable();
 	disable_equipment(PIN_SENSORS_EN, HIGH);
 
+#ifndef NO_BATTERY_MEASURE
 	// get battery voltage
 	debug_me("Start ADC module");
-
-#ifndef NO_BATTERY_MEASURE
-	// enable battery circuit
-	enable_equipment(PIN_VBATT_EN, LOW);
-	// wait some time to stabilize voltage
-	delay(5);
+	// enable battery circuit and wait some time to stabilize voltage
+	enable_equipment(PIN_VBATT_EN, LOW, 5);
 	adc_init();
 	battery_voltage = get_voltage(get_adc_value());
 	adc_disable();
@@ -619,11 +682,10 @@ void run_cycle()
 #endif
 
 	// radio stuff
-	enable_equipment(PIN_RADIO_EN, LOW);
-	delay(10);
+	enable_equipment(PIN_RADIO_EN, LOW, 15, OUTPUT, true);
 	radio_init();
 
-	if (sht31_sensor_failure)
+	if (sht31_sensor_failure > 0)
 	{
 		prepare_msg(MSGC_TEMP_SENSOR_ERROR, sht31_sensor_failure, &msg[0], "%i");
 		send_msg(&msg[0]);
@@ -703,19 +765,25 @@ void run_cycle()
 // SAM D21 additional operational functions & power saving functions
 void power_up()
 {
+	// SYSCTRL->OSC8M.bit.PRESC = SYSCTRL_OSC8M_PRESC_0_Val; // scale CPU UP
+
+	while (RTC->MODE2.STATUS.bit.SYNCBUSY) ; //wait for RTC sync
+
 	PM->APBBMASK.reg |= PM_APBBMASK_PORT;
 
-	// required for I2C
+	enable_debug_mode();
+	debug_me("-- Powering up");
+	gcnt.increase_cycles();
+
+	// watchdog PM
+	PM->APBAMASK.reg |=	PM_APBAMASK_WDT;
+
+	// required for I2C/TWI (variant.h)
 	PM->APBCMASK.reg |= PM_APBCMASK_SERCOM3;
 
-	// required for SPI
+	// required for SPI (variant.h)
 	PM->APBCMASK.reg |= PM_APBCMASK_SERCOM4;
 
-	SYSCTRL->OSC8M.bit.PRESC = SYSCTRL_OSC8M_PRESC_0_Val; // scale CPU UP
-
-	enable_debug_mode();
-	debug_me("Powering up");
-	gcnt.increase_cycles();
 }
 
 // disabling power managers for most of peripherals
@@ -741,8 +809,8 @@ void power_manager_control()
 void pins_power_down()
 {
 	// switch all port to input mode
-	PORT->Group[0].DIR.reg = 0x0;
-	PORT->Group[1].DIR.reg = 0x0;
+	PORT->Group[PORTA].DIR.reg = 0x0;
+	PORT->Group[PORTB].DIR.reg = 0x0;
 
 	// change configuration to default on all pins - based on documentation, this is the most power save scenario
 	for (unsigned int pin_n = 0; pin_n < 32; pin_n++)
@@ -767,13 +835,14 @@ void go_sleep()
 {
 	debug_me("Going sleep");
 
-	debug_me("Power down");
 	disable_debug_mode();
 
 	// disabling BOD
 	disable_BOD();
 
-	SYSCTRL->OSC8M.bit.PRESC = SYSCTRL_OSC8M_PRESC_3_Val; // scale CPU Down
+	// NVMCTRL->CTRLB.reg |= NVMCTRL_CTRLB_SLEEPPRM_DISABLED; // commented out, saves a lot of power but might be dangerous
+
+	// SYSCTRL->OSC8M.bit.PRESC = SYSCTRL_OSC8M_PRESC_3_Val; // scale CPU Down
 
 	// disabling unused oscillators
 	SYSCTRL->XOSC32K.bit.ENABLE = 0;
@@ -787,7 +856,7 @@ void go_sleep()
 	// disabling all unused clock controllers - just leaving enabled clock 0 - as a source for system and clock controller for RTC
 	for (uint8_t cnt = 1; cnt < GCLK_GEN_NUM_MSB; cnt++)
 	{
-		if (cnt == GCLK_USED_FOR_RTC)
+		if (cnt == GCLK_USED_FOR_RTC or cnt == GCLK_USED_FOR_WDT)
 		{
 			continue;
 		};
@@ -834,6 +903,7 @@ void SystemInit(void)
 	SysTick_Config(SystemCoreClock / 1000);
 
 	enable_debug_mode();
+	debug_me("--");
 	debug_me("System start");
 	say_hello_world(3, 100);
 
@@ -843,6 +913,8 @@ void SystemInit(void)
 	rtc.enableAlarm(rtc.MATCH_HHMMSS);
 	rtc.attachInterrupt(dummy_interrupt);
 
+	watchdog_init();
+
 	get_unique_id();
 
 	startup_reset_cause = get_last_reset_cause();
@@ -850,7 +922,10 @@ void SystemInit(void)
 	for (;;)
 	{
 		power_up();
+		watchdog_enable();
 		run_cycle();
+		watchdog_mark_my_existence();
+		watchdog_disable();
 		go_sleep();
 	}
 }
