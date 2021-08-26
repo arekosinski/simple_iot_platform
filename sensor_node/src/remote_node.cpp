@@ -214,7 +214,11 @@ void get_unique_id()
 
 	debug_me("MCU unique ID: 0x%8x%8x%8x%8x", mcu_unique_id[0], mcu_unique_id[1], mcu_unique_id[2], mcu_unique_id[3]);
 
-	my_node_id = mcu_unique_id[0] % 64 + mcu_unique_id[1] % 64 + mcu_unique_id[2] % 64 + mcu_unique_id[3] % 64;
+	#if defined(CUSTOM_NODE_ID)
+		my_node_id = CUSTOM_NODE_ID;
+	#else
+		my_node_id = mcu_unique_id[0] % 64 + mcu_unique_id[1] % 64 + mcu_unique_id[2] % 64 + mcu_unique_id[3] % 64;
+	#endif
 
 	debug_me("My NODE_ID: %i / %x ", my_node_id, my_node_id);
 }
