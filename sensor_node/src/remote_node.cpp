@@ -59,14 +59,13 @@ typedef enum e_message_content_codes_definition
 	MSGC_AVG_CYCLE_LENGTH = 0x7,
 	MSGC_DELIVERY_RATIO = 0x8,
 	MSGC_RETRANSMISSIONS = 0x9,
+	MSGC_ACCU_VOLTAGE = 0xA,
 	MSGC_ID_1 = 0xB,
 	MSGC_ID_2 = 0xC,
 	MSGC_ID_3 = 0xD,
 	MSGC_ID_4 = 0xE,
 	MSGC_STARTUP_CODE = 0xF
 	// for further use:
-	// 0x10
-	// 0xA
 	// 0x0
 } message_content_ref;
 
@@ -98,8 +97,8 @@ uint_fast8_t is_debug_initialized = 0;
 uint_fast8_t startup_reset_cause = 0;
 uint_fast32_t mcu_unique_id[4]; // in this place we will keep unique identifier of our board
 uint8_t my_node_id = 0;			// ID of this board - calculated from mcu_unique_id
-#ifndef BOARD_VCC
-	#define BOARD_VCC 			(3.05F) // required for ADC measurments (VCC is source for voltage divider)
+#ifndef BOARD_VCC_STABLE
+	#define BOARD_VCC_STABLE 			(3.05F) // required for ADC measurments (VCC is source for voltage divider)
 #endif
 #ifndef STATS_SENDER_CYCLES // after how many cycles performance statistics should be sent
 	#define STATS_SENDER_CYCLES (20ul)
@@ -314,7 +313,6 @@ void watchdog_disable() {
 #endif
 };
 
-
 //
 // basic function to shorthand (wrap) enabling and disabling available equipment
 void enable_equipment(const uint8_t pinNumber, const PinStatus state = HIGH,  unsigned long delay_lag = 0, const PinMode mode = OUTPUT, bool portDrvStrength = false)
@@ -385,7 +383,7 @@ bool send_msg(char *msg)
 		debug_me("Sending trial: %i", sending_trial);
 		gcnt.increase_msg_trials();
 		msg_sending_result = radio.write(msg, strlen(msg));
-		gcnt.increase_msg_retransmissions(radio.getARC()); // get retransmission count directly from radio module - there is implemented native msg repeating mechanism in case of sending failure
+		gcnt.increase_msg_retransmissions(radio.getARC()); // get retransmission count directly from radio module - there is native msg repeating mechanism in case of sending failure
 		if (msg_sending_result)
 		{
 			debug_me("Message sent with success!");
@@ -473,15 +471,29 @@ void radio_disable()
 
 // ADC functions
 // init_adc based on: https://blog.thea.codes/reading-analog-values-with-the-samd-adc/ - thank you :)
+void adc_sync() {
+	/* Wait for bus synchronization. */
+	while (ADC->STATUS.bit.SYNCBUSY) {};
+}
+
+void adc_enable() {
+	ADC->CTRLA.bit.ENABLE = 1;
+	adc_sync();
+}
+
+void adc_disable()
+{
+	ADC->CTRLA.bit.ENABLE = 0;
+	adc_sync();
+}
+
 void adc_init()
 {
 	/* Enable the APB clock for the ADC. */
 	PM->APBCMASK.reg |= PM_APBCMASK_ADC;
 
-	ADC->CTRLA.bit.ENABLE = 0;
-	while (GCLK->STATUS.bit.SYNCBUSY)
-	{
-	};
+	adc_disable();
+
 	/* Enable GCLK0 for the ADC */
 	GCLK->CLKCTRL.reg = GCLK_CLKCTRL_CLKEN |
 						GCLK_CLKCTRL_GEN_GCLK0 |
@@ -491,17 +503,11 @@ void adc_init()
 	uint32_t linearity = (*((uint32_t *)ADC_FUSES_LINEARITY_0_ADDR) & ADC_FUSES_LINEARITY_0_Msk) >> ADC_FUSES_LINEARITY_0_Pos;
 	linearity |= ((*((uint32_t *)ADC_FUSES_LINEARITY_1_ADDR) & ADC_FUSES_LINEARITY_1_Msk) >> ADC_FUSES_LINEARITY_1_Pos) << 5;
 
-	/* Wait for bus synchronization. */
-	while (GCLK->STATUS.bit.SYNCBUSY)
-	{
-	};
+	adc_sync();
 
 	/* Write the calibration data. */
 	ADC->CALIB.reg = ADC_CALIB_BIAS_CAL(bias) | ADC_CALIB_LINEARITY_CAL(linearity);
-	/* Wait for bus synchronization. */
-	while (ADC->STATUS.bit.SYNCBUSY)
-	{
-	};
+	adc_sync();
 
 	/* Voltage reference: 1/1.48 VDDANA -> for this board it is ~3.065V/1.48 = 2.07V */
 	ADC->REFCTRL.reg = ADC_REFCTRL_REFSEL_INTVCC0;
@@ -531,33 +537,25 @@ void adc_init()
     */
 	ADC->INPUTCTRL.bit.GAIN = ADC_INPUTCTRL_GAIN_1X_Val;
 	ADC->INPUTCTRL.bit.MUXNEG = ADC_INPUTCTRL_MUXNEG_GND_Val;
-	ADC->INPUTCTRL.bit.MUXPOS = ADC_INPUTCTRL_MUXPOS_PIN10_Val;
-
-	/* Set A5 / PB02 as an input pin. */
-	PORT->Group[PORTB].DIRCLR.reg = PORT_PB02;
-	/* Enable the peripheral multiplexer for PA05. */
-	PORT->Group[PORTB].PINCFG[2].bit.PMUXEN = 1;
-
-	/* Set A5/PB02 to function B which is analog input. */
-	PORT->Group[PORTB].PMUX[1].reg = PORT_PMUX_PMUXE_B;
 
 	/* Wait for bus synchronization. */
-	while (ADC->STATUS.bit.SYNCBUSY);
+	adc_sync();
 }
 
-void adc_disable()
-{
-	ADC->CTRLA.bit.ENABLE = 0;
-	while (ADC->STATUS.bit.SYNCBUSY);
+void adc_configure_read_port(uint32_t adc_pin) { 
+
+	ADC->INPUTCTRL.bit.MUXPOS = g_APinDescription[adc_pin].ulADCChannelNumber; // Selection for the positive ADC input
+
+	adc_sync();
+
+	pinPeripheral(adc_pin, PIO_ANALOG);
 }
 
 uint_fast32_t get_adc_value()
-{
+{	
 	/* Enable the ADC. */
 	/* Wait for bus synchronization. */
-	ADC->CTRLA.bit.ENABLE = 1;
-
-	while (ADC->STATUS.bit.SYNCBUSY);
+	adc_enable();
 
 	// first measure should be throw away
 	/* Start the ADC using a software trigger. */
@@ -583,11 +581,10 @@ uint_fast32_t get_adc_value()
 	return result;
 }
 
-float get_voltage(uint_fast32_t adc_reading)
+float get_voltage(uint_fast32_t adc_reading,float scaling_factor = 2, float board_vcc = BOARD_VCC_STABLE)
 {
-	return 2 * adc_reading * ((float)BOARD_VCC / 1.48F) / 4096;
+	return scaling_factor * adc_reading * ((float)board_vcc / 1.48F) / 4096;
 }
-
 // END ADC functions
 
 // SHT31 init function
@@ -629,7 +626,10 @@ void sht31_disable()
 void run_cycle()
 {
 	unsigned long epoch_start, epoch_end, epoch_diff = 0;
+	uint_fast16_t adc_read_battery = 0;
+	uint_fast16_t adc_read_accu = 0;
 	float battery_voltage = 0;
+	float accu_voltage = 0;
 	float sht31_temperature = 0;
 	float sht31_humidity = 0;
 	uint8_t sht31_sensor_failure = 0;
@@ -678,10 +678,24 @@ void run_cycle()
 	// enable battery circuit and wait some time to stabilize voltage
 	enable_equipment(PIN_VBATT_EN, LOW, 5);
 	adc_init();
-	battery_voltage = get_voltage(get_adc_value());
+	adc_configure_read_port(A5);
+	adc_read_battery = get_adc_value();
+	battery_voltage = get_voltage(adc_read_battery);
+	debug_me("Power source/battery ADC reading: %i", adc_read_battery);
+	debug_me("Power source/battery voltage: %f", battery_voltage);
+	adc_disable();
+
+	#ifdef ACCU_POWER_SOURCE
+	adc_configure_read_port(A0);
+	adc_read_accu = get_adc_value();
+	accu_voltage = get_voltage(adc_read_accu, 2.08); //max 4.21V from li-po, 510k Ohm, 470k Ohm -> max 2.019V from voltage divider
+	
+	debug_me("Power source/Accu ADC read: %i", adc_read_accu);
+	debug_me("Power source/Accu voltage: %f", accu_voltage);
+	#endif
+
 	adc_disable();
 	disable_equipment(PIN_VBATT_EN, HIGH);
-	debug_me("Battery voltage: %f", battery_voltage);
 	// END get battery voltage
 #endif
 
@@ -703,8 +717,16 @@ void run_cycle()
 		send_msg(&msg[0]);
 	};
 
+#ifndef NO_BATTERY_MEASURE
 	prepare_msg(MSGC_BATTERY_VOLTAGE, battery_voltage, &msg[0], "%01.3f");
 	send_msg(&msg[0]);
+	
+	#ifdef ACCU_POWER_SOURCE
+	prepare_msg(MSGC_ACCU_VOLTAGE, accu_voltage, &msg[0], "%01.3f");
+	send_msg(&msg[0]);
+	#endif
+
+#endif
 
 	// send basic stats about this board and startup
 	if (gcnt.get_cycles() % STATS_SENDER_CYCLES == 0 or gcnt.get_cycles() == 1)
