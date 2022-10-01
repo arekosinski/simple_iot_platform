@@ -6,7 +6,7 @@ import time
 
 from os.path import expanduser
 
-uart_speed = 460800
+uart_speed = 230400
 uart_port = '/dev/ttyAMA0'
 
 msg_logger_file = "{homedir}/radio_msg.log".format(homedir=expanduser("~"))
@@ -33,7 +33,7 @@ if __name__ == '__main__':
 	while True:
 		if serial_proxy.in_waiting > 0:
 			try:
-				line = serial_proxy.readline().decode('ascii').rstrip()
+				line = serial_proxy.readline().decode('ascii').strip()
 				print("MSG received: {msg}".format(msg=line))
 				if ('|' in line):
 					msg_decoded = decode_msg(line)
