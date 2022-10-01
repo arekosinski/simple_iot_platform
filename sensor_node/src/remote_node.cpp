@@ -113,20 +113,21 @@ uint8_t my_node_id = 0;			// ID of this board - calculated from mcu_unique_id
 #define R_PIN_CE 				(9ul)
 #define R_PIN_CSN				(38ul)
 #define R_ADDR_TX 				(0x696900)
-#define R_ADDR_RX_COMMON 		(0xAABB00) // common part of each node. To this constant we are adding custom node id value
+#define R_ADDR_RX_COMMON 		(0xAA0000) // common part of each node. To this constant we are adding custom node id value
 #define R_ADDR_WIDTH 			(3ul)
-#define R_CHANNEL 				(99ul)
+#define R_CHANNEL 				(20ul)
 #ifndef R_POWER_LVL
 	#define R_POWER_LVL 		RF24_PA_HIGH
 #endif
 #define R_DATA_RATE 			RF24_250KBPS
-#define R_RETRIES_DELAY 		(8ul)  // see documentation for setRetires function
-#define R_RETRIES_COUNT 		(3ul) // see documentation for setRetires function
+#define R_RETRIES_DELAY 		(10ul)  // see documentation for setRetires function
+#define R_RETRIES_COUNT 		(15ul) // see documentation for setRetires function
 #define MSG_SEP 				"|"
 #define R_MSG_MAX_REPEAT 		(3ul) // how many time try of sending message should be taken - additional wrapping of write function
 RF24 radio(R_PIN_CE, R_PIN_CSN);
 
 // including stuff required for Sensirion SHT31 sensor
+#include <Wire.h>
 #include "Adafruit_SHT31.h"
 #define SHT31_ENABLE_HEATER 	(false)
 
@@ -588,7 +589,7 @@ float get_voltage(uint_fast32_t adc_reading,float scaling_factor = 2, float boar
 // END ADC functions
 
 // SHT31 init function
-bool sht31_enable()
+uint8_t sht31_enable()
 {
 	uint8_t sht31_sensor_failure = 0;
 

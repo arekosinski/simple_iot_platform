@@ -8,7 +8,7 @@
 
 // system behavior
 #define SERIAL_BAUDS     (115200ul)	// UART Speed for debugging header (Arduino: Serial object)
-#define RPI_SERIAL_BAUDS (460800ul) // UART Speed for communication with Raspberry Pi (Arduino: Serial1 object)
+#define RPI_SERIAL_BAUDS (230400ul) // UART Speed for communication with Raspberry Pi (Arduino: Serial1 object)
 
 uint8_t is_debug_initialized = 0;
 
@@ -21,10 +21,10 @@ uint8_t is_debug_initialized = 0;
 #define R_PIN_CSN        (38ul)		  // Arduino: D38 / Board: D38_SPI_SSCSN/PA13
 #define R_ADDR_RX        (0x696900)	  // Address on which we must listen to get messages from remote nodes (on remote nodes this is TX address)
 #define R_ADDR_WIDTH     (3ul)		  // We can limit frame by using shorter address
-#define R_CHANNEL        (99ul)		  // Channel number from 2.4GHz range
+#define R_CHANNEL        (20ul)		  // Channel number from 2.4GHz range
 #define R_POWER_LVL      RF24_PA_MAX  // Output power during sending
 #define R_DATA_RATE      RF24_250KBPS // Data rate used over the air
-#define R_MSG_DELAY      (5ul)		  // Check description of setRetries function for meaning of this value
+#define R_MSG_DELAY      (50ul)		  // Check description of setRetries function for meaning of this value
 #define R_MSG_RETRIES    (10ul)	      // Check description of setRetries function for meaning of this value
 
 RF24 radio(R_PIN_CE, R_PIN_CSN);
@@ -224,6 +224,5 @@ void setup(void) {
 	Serial1.println("X: Welcome");
 	Serial1.print("X: Last reboot code: ");
 	Serial1.println(startup_code);
-
 	init_radio();
 }
