@@ -115,13 +115,13 @@ uint8_t my_node_id = 0;			// ID of this board - calculated from mcu_unique_id
 #define R_ADDR_TX 				(0x696900)
 #define R_ADDR_RX_COMMON 		(0xAA0000) // common part of each node. To this constant we are adding custom node id value
 #define R_ADDR_WIDTH 			(3ul)
-#define R_CHANNEL 				(20ul)
+#define R_CHANNEL 				(99ul)
 #ifndef R_POWER_LVL
 	#define R_POWER_LVL 		RF24_PA_HIGH
 #endif
 #define R_DATA_RATE 			RF24_250KBPS
-#define R_RETRIES_DELAY 		(10ul)  // see documentation for setRetires function
-#define R_RETRIES_COUNT 		(15ul) // see documentation for setRetires function
+#define R_RETRIES_DELAY 		(50ul)  // see documentation for setRetires function
+#define R_RETRIES_COUNT 		(5ul) // see documentation for setRetires function
 #define MSG_SEP 				"|"
 #define R_MSG_MAX_REPEAT 		(3ul) // how many time try of sending message should be taken - additional wrapping of write function
 RF24 radio(R_PIN_CE, R_PIN_CSN);
@@ -215,7 +215,7 @@ void get_unique_id()
 	debug_me("MCU unique ID: 0x%8x%8x%8x%8x", mcu_unique_id[0], mcu_unique_id[1], mcu_unique_id[2], mcu_unique_id[3]);
 
 	#if defined(CUSTOM_NODE_ID)
-		my_node_id = CUSTOM_NODE_ID;
+		my_node_id = (uint8_t)CUSTOM_NODE_ID;
 	#else
 		my_node_id = mcu_unique_id[0] % 64 + mcu_unique_id[1] % 64 + mcu_unique_id[2] % 64 + mcu_unique_id[3] % 64;
 	#endif
